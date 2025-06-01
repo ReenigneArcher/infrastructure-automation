@@ -1,0 +1,16 @@
+---
+- name: Send email notification
+  delegate_to: localhost
+  when:
+    - email_to is defined
+    - notification_message is defined
+  community.general.mail:
+    host: "{{ email_host | default('localhost') }}"
+    port: "{{ email_port | default(25) }}"
+    username: "{{ email_username | default(omit) }}"
+    password: "{{ email_password | default(omit) }}"
+    secure: "{{ email_secure | default(omit) }}"
+    from: "{{ email_from | default('ansible@' + ansible_fqdn) }}"
+    to: "{{ email_to }}"
+    subject: "{{ notification_title | default('Ansible Notification') }}"
+    body: "{{ notification_message }}"

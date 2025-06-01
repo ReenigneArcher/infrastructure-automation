@@ -1,0 +1,19 @@
+---
+- name: Send Discord notification
+  delegate_to: localhost
+  when:
+    - discord_webhook_url is defined
+    - notification_message is defined
+  ansible.builtin.uri:
+    url: "{{ discord_webhook_url }}"
+    method: POST
+    status_code: [200, 204]
+    body_format: json
+    body:
+      # https://gist.github.com/Birdie0/78ee79402a4301b1faf412ab5f1cdcf9
+      embeds:
+        - title: "{{ notification_title | default('Ansible Notification') }}"
+          color: "{{ notification_color | default(notification_colors[notification_level | default('info')]) }}"
+          description: "{{ notification_message }}"
+          footer:
+            text: "{{ notification_footer | default('Ansible: ' + ansible_date_time.iso8601) }}"

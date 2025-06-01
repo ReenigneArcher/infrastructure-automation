@@ -1,0 +1,5 @@
+---
+- name: Send notification
+  when:
+    - notification_message is defined
+  include_tasks: "{{ notification_type | default('discord') }}.yml"

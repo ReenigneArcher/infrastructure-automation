@@ -1,0 +1,4 @@
+[submodule "inventory"]
+	path = inventory
+	url = https://github.com/ReenigneArcher/ansible-inventory.git
+	branch = master

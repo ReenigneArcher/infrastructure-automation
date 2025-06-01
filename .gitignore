@@ -1,0 +1,4 @@
+# Ignore JetBrains IDE files
+.idea/
+
+.vault-password

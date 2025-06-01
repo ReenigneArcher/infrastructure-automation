@@ -1,0 +1,6 @@
+---
+notification_colors:
+  info: 3447003  # Blue
+  success: 5763719  # Green
+  warning: 15105570  # Orange
+  error: 15548997  # Red

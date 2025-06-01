@@ -1,0 +1,136 @@
+---
+name: Ansible
+description: 'Sets up Ansible environment and runs playbooks of a specific schedule type'
+
+inputs:
+  open_vpn_config:
+    description: 'OpenVPN configuration file contents'
+    required: false
+    default: ''
+  hide_ip:
+    description: 'IP Address to hide in logs (useful for VPN connections)'
+    required: false
+    default: ''
+  vault_password:
+    description: 'Ansible vault password'
+    required: true
+  image_name:
+    description: 'Name for the built Docker image'
+    required: false
+    default: 'ansible'
+  schedule_type:
+    description: 'Type of schedule to look for (daily, weekly, etc.)'
+    required: true
+
+outputs:
+  playbooks-found:
+    description: 'List of playbooks found'
+    value: ${{ steps.find-playbooks.outputs.playbooks }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Fail if not Debian based
+      if: inputs.open_vpn_config != ''
+      shell: bash
+      run: |
+        if ! grep -qE '^(ID=debian|ID_LIKE=debian)' /etc/os-release; then
+          echo "::error::This action requires a Debian-based system when OpenVPN is configured."
+          exit 1
+        fi
+
+    - name: Install OpenVPN
+      if: inputs.open_vpn_config != ''
+      shell: bash
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y \
+          openvpn \
+          openvpn-systemd-resolved
+
+    - name: Create OpenVPN config file
+      if: inputs.open_vpn_config != ''
+      shell: bash
+      run: echo "${{ inputs.open_vpn_config }}" > openvpn.conf
+
+    - name: Connect to VPN
+      # alternative: kota65535/github-openvpn-connect-action
+      if: inputs.open_vpn_config != ''
+      env:
+        HIDE_IP: ${{ inputs.hide_ip }}  # hack to hide IP address in logs
+      shell: bash
+      run: sudo openvpn --config openvpn.conf --daemon --log openvpn.log --writepid openvpn.pid
+
+    - name: Create Ansible vault password file
+      shell: bash
+      run: echo "${{ inputs.vault_password }}" > .vault-password
+
+    - name: Build docker image
+      shell: bash
+      run: docker build -t ${{ inputs.image_name }} .
+
+    - name: Run docker image
+      shell: bash
+      run: docker run -d --name ${{ inputs.image_name }} --rm ${{ inputs.image_name }}
+
+    - name: Find playbooks
+      id: find-playbooks
+      shell: bash
+      run: |
+        PLAYBOOKS=$(find ./playbooks -path "*/${{ inputs.schedule_type }}/*.yml" -type f)
+        echo "Found playbooks: $PLAYBOOKS"
+        echo "playbooks<<EOF" >> $GITHUB_OUTPUT
+        echo "$PLAYBOOKS" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Run playbooks
+      id: run-playbooks
+      shell: bash
+      run: |
+        PLAYBOOKS="${{ steps.find-playbooks.outputs.playbooks }}"
+
+        # Exit if no playbooks found
+        if [ -z "$PLAYBOOKS" ]; then
+          echo "No ${{ inputs.schedule_type }} playbooks found"
+          echo "status=no_playbooks_found" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        FAILED=0
+        # Run each playbook individually
+        while IFS= read -r playbook; do
+          if [ -z "$playbook" ]; then
+            continue
+          fi
+
+          echo "::group::Playbook - $playbook"
+          set +e  # Allow playbook to fail without exiting the script
+          docker exec ${{ inputs.image_name }} ansible-playbook "$playbook"
+
+          # Check playbook execution status
+          if [ $? -ne 0 ]; then
+            echo "::error::Playbook $playbook failed"
+            echo "❌ Playbook $playbook failed" >> $GITHUB_STEP_SUMMARY
+            FAILED=1
+          else
+            echo "Playbook $playbook completed successfully"
+            echo "✔️ Playbook $playbook completed successfully" >> $GITHUB_STEP_SUMMARY
+          fi
+          set -e  # Re-enable exit on error
+          echo "::endgroup::"
+        done <<< "$PLAYBOOKS"
+
+        exit $FAILED
+
+    - name: Disconnect from VPN
+      if: always() && inputs.open_vpn_config != ''
+      shell: bash
+      run: |
+        if [ -f openvpn.pid ]; then
+          # TODO: openvpn3 has better handling for disconnecting
+          sudo kill $(cat openvpn.pid) || true
+          rm openvpn.pid
+        fi
+        if [ -f openvpn.log ]; then
+          rm openvpn.log
+        fi

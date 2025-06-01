@@ -1,0 +1,35 @@
+---
+name: Daily
+
+on:
+  schedule:
+    - cron: '0 12 * * *'
+  workflow_dispatch:
+
+env:
+  image_name: ansible
+  schedule_type: daily
+
+concurrency:
+  group: daily-workflow
+  cancel-in-progress: true
+
+jobs:
+  daily_tasks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Ansible
+        id: ansible
+        uses: ./.github/actions/ansible
+        with:
+          open_vpn_config: ${{ secrets.OPEN_VPN_CONFIG }}
+          vault_password: ${{ secrets.ANSIBLE_VAULT_PASSWORD }}
+          hide_ip: ${{ secrets.HIDE_IP }}
+          image_name: ${{ env.image_name }}
+          schedule_type: ${{ env.schedule_type }}

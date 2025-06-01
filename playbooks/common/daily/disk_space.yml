@@ -1,0 +1,158 @@
+---
+# playbook to check disk space on Linux, macOS, and Windows hosts
+- name: Check Disk Space
+  hosts:
+    - linux
+    - macos
+    - windows
+  vars:
+    usage_threshold: 80  # Percentage threshold for disk usage alerts
+
+  tasks:
+    # Initialize empty list for high usage disks
+    - name: Initialize empty list for high usage disks
+      ansible.builtin.set_fact:
+        high_usage_disks: []
+
+    # Linux disk space check
+    - name: Get disk space information on Linux
+      when:
+        - ansible_os_family in ['Alpine', 'Debian', 'RedHat', 'SUSE']
+      register: linux_disk_space
+      ansible.builtin.shell: df -PT | grep -v 'tmpfs\|devtmpfs\|squashfs\|overlay' | tail -n +2
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Initialize dictionary to track unique filesystems on Linux
+      when:
+        - ansible_os_family in ['Alpine', 'Debian', 'RedHat', 'SUSE']
+        - linux_disk_space.stdout is defined
+      ansible.builtin.set_fact:
+        unique_filesystems: { }
+
+    - name: Process Linux disk space information
+      when:
+        - ansible_os_family in ['Alpine', 'Debian', 'RedHat', 'SUSE']
+        - linux_disk_space.stdout is defined
+        - item.split() | length >= 7
+      ansible.builtin.set_fact:
+        unique_filesystems: >-
+          {{
+            unique_filesystems | combine({
+              item.split()[0]: {
+                'filesystem': item.split()[0],
+                'type': item.split()[1],
+                'mount': item.split()[6], 
+                'size_total': (item.split()[2] | int * 1024),
+                'usage_percent': item.split()[5] | regex_replace('%', '') | int,
+                'mounts': (unique_filesystems[item.split()[0]].mounts | default([]) + [item.split()[6]]) if item.split()[0] in unique_filesystems else [item.split()[6]]
+              }
+            })
+          }}
+      loop: "{{ linux_disk_space.stdout_lines }}"
+
+    - name: Add high usage Linux disks to the list
+      when:
+        - ansible_os_family in ['Alpine', 'Debian', 'RedHat', 'SUSE']
+        - unique_filesystems is defined
+        - item.value.usage_percent >= (usage_threshold | int)
+      ansible.builtin.set_fact:
+        high_usage_disks: "{{ high_usage_disks + [item.value] }}"
+      loop: "{{ unique_filesystems | dict2items }}"
+
+    # macOS disk space check
+    - name: Get disk space information on macOS
+      when:
+        - ansible_os_family == 'Darwin'
+      register: macos_disk_space
+      ansible.builtin.shell: df -Pl | grep -v Filesystem | grep -v devfs | grep -v map
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Parse macOS disk space information
+      when:
+        - ansible_os_family == 'Darwin'
+        - macos_disk_space.stdout is defined
+        - item.split() | length >= 9
+        - (item.split()[4] | regex_replace('%', '') | int) >= (usage_threshold | int)
+      ansible.builtin.set_fact:
+        high_usage_disks: "{{ high_usage_disks + [{'filesystem': item.split()[0], 'mount': item.split()[8], 'size_total': (item.split()[1] | int * 512), 'usage_percent': item.split()[4] | regex_replace('%', '') | int}] }}"
+      loop: "{{ macos_disk_space.stdout_lines }}"
+
+    # Windows disk space check
+    - name: Get disk space information on Windows
+      when:
+        - ansible_os_family == 'Windows'
+      register: win_disk_space
+      ansible.windows.win_shell: |
+        Get-Volume | Where-Object {
+          # Only include volumes with drive letters and that are not CD-ROMs
+          $_.DriveLetter -ne $null -and 
+          $_.DriveType -eq 'Fixed' -and 
+          $_.SizeRemaining -ne $null -and 
+          $_.Size -gt 0
+        } | ForEach-Object {
+          $usedPercent = [math]::Round(($_.Size - $_.SizeRemaining) / $_.Size * 100, 1)
+          $driveLetter = $_.DriveLetter + ":"
+          [PSCustomObject]@{
+            DriveLetter = $driveLetter
+            Label = $_.FileSystemLabel
+            SizeTotal = $_.Size
+            SizeRemaining = $_.SizeRemaining
+            UsagePercent = $usedPercent
+          }
+        } | ConvertTo-Json
+      changed_when: false
+
+    - name: Parse Windows disk space information
+      when:
+        - ansible_os_family == 'Windows'
+        - win_disk_space.stdout is defined
+      ansible.builtin.set_fact:
+        win_volumes: "{{ win_disk_space.stdout | from_json }}"
+
+    - name: Add Windows disks with high usage to the list
+      when:
+        - ansible_os_family == 'Windows'
+        - win_volumes is defined
+        - win_volumes | type_debug != 'dict' or (win_volumes.UsagePercent is not defined and win_volumes | length > 0)
+        - item.UsagePercent | default(0) >= (usage_threshold | int)
+      ansible.builtin.set_fact:
+        high_usage_disks: "{{ high_usage_disks + [{'mount': item.DriveLetter, 'label': item.Label, 'size_total': item.SizeTotal, 'size_available': item.SizeRemaining, 'usage_percent': item.UsagePercent}] }}"
+      loop: "{{ win_volumes if win_volumes is sequence else [win_volumes] }}"
+
+    - name: Notify Discord about high disk usage
+      when:
+        - high_usage_disks | default([]) | length > 0
+      include_role:
+        name: notifications
+      vars:
+        notification_type: "discord"
+        notification_title: "⚠️ High Disk Usage Detected"
+        notification_level: "warning"
+        notification_message: |
+          **Host:** {{ ansible_hostname }}
+          **OS:** {{ ansible_distribution | default(ansible_os_family) }} {{ ansible_distribution_version | default('') }}
+
+          {% for disk in high_usage_disks %}
+          {% if ansible_os_family == 'Windows' %}
+          **Drive:** {{ disk.mount }}{% if disk.label is defined and disk.label | length > 0 %} ({{ disk.label }}){% endif %}
+          {% else %}
+          **Device:** {{ disk.filesystem | default(disk.mount) }}
+          **Type:** {{ disk.type | default('N/A') }}
+          {% if disk.mounts is defined and disk.mounts | length > 1 %}
+          **Mount Points:** {{ disk.mounts | join(', ') }}
+          {% else %}
+          **Mount:** {{ disk.mount }}{% if disk.label is defined and disk.label | length > 0 %} ({{ disk.label }}){% endif %}
+          {% endif %}
+          {% endif %}
+
+          **Size:** {{ disk.size_total | human_readable }}
+          {% if disk.size_available is defined %}
+          **Available:** {{ disk.size_available | human_readable }}
+          {% endif %}
+          **Usage:** {{ disk.usage_percent }}%
+
+          {% endfor %}
