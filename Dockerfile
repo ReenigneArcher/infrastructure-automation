@@ -9,10 +9,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 FROM base AS dev
 
 ENV DISPLAY=:0
+ENV ANSIBLE_CONFIG=/app/ansible.cfg
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# install dependencies
+# install system dependencies
 # hadolint ignore=SC1091
 RUN <<_DEPS
 #!/bin/bash
@@ -29,23 +30,16 @@ apt-get clean
 rm -rf /var/lib/apt/lists/*
 _DEPS
 
-# Create working directory
-WORKDIR /app
-
-# Copy repo
-COPY . .
-
-# Change permissions
-RUN <<_PERMISSIONS
-#!/bin/bash
-set -e
-chmod -x .vault-password
-_PERMISSIONS
+# Copy only requirement files
+WORKDIR /build
+COPY requirements.txt requirements-dev.txt requirements.yml ./
 
 # Install Python dependencies
 RUN <<_PYTHON
 #!/bin/bash
 set -e
+python -m venv /root/.venv
+source /root/.venv/bin/activate
 python -m pip install --no-cache-dir --upgrade pip setuptools wheel
 python -m pip install --no-cache-dir \
   -r requirements.txt \
@@ -56,8 +50,14 @@ _PYTHON
 RUN <<_ANSIBLE
 #!/bin/bash
 set -e
+source /root/.venv/bin/activate
 ansible-galaxy collection install -r requirements.yml
 _ANSIBLE
+
+# Set path so we don't have to activate the virtual environment
+ENV PATH="/root/.venv/bin:${PATH}"
+
+WORKDIR /app
 
 # Set entrypoint
 ENTRYPOINT ["/bin/bash", "-c", "sleep infinity"]
