@@ -71,7 +71,13 @@ runs:
 
     - name: Run docker image
       shell: bash
-      run: docker run -d --name ${{ inputs.image_name }} --rm ${{ inputs.image_name }}
+      run: |
+        docker run \
+          --detach \
+          --name ${{ inputs.image_name }} \
+          --rm \
+          --volume $(pwd):/app \
+          ${{ inputs.image_name }}
 
     - name: Find playbooks
       id: find-playbooks
