@@ -1,0 +1,109 @@
+---
+# playbook to check ZFS pool health on Linux hosts
+- name: Check ZFS Pool Health
+  hosts:
+    - linux
+  ignore_unreachable: true
+
+  tasks:
+    - name: Main
+      when:
+        - ansible_os_family is defined  # this will only be defined for reachable hosts
+      block:
+        # Check if ZFS is installed
+        - name: Check if ZFS is installed on Linux
+          register: zfs_command_check
+          ansible.builtin.command:
+            cmd: which zpool
+          changed_when: false
+          failed_when: false
+
+        # If ZFS is installed, get list of pools
+        - name: Get list of ZFS pools
+          register: zpool_list
+          when:
+            - ansible_os_family in ['Debian', 'RedHat', 'SUSE']
+            - zfs_command_check.rc == 0
+          ansible.builtin.command:
+            cmd: zpool list -H -o name
+          changed_when: false
+          failed_when: false
+
+        # Check health of each pool
+        - name: Check health of each ZFS pool
+          loop: "{{ zpool_list.stdout_lines | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          register: zpool_status_results
+          when:
+            - ansible_os_family in ['Debian', 'RedHat', 'SUSE']
+            - zfs_command_check.rc == 0
+          ansible.builtin.command:
+            cmd: zpool status -p -v "{{ item }}"
+          changed_when: false
+
+        # Check status of each pool
+        - name: Get health status of each ZFS pool
+          loop: "{{ zpool_list.stdout_lines | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          register: zpool_health
+          when:
+            - ansible_os_family in ['Debian', 'RedHat', 'SUSE']
+            - zfs_command_check.rc == 0
+          ansible.builtin.command:
+            cmd: zpool list -H -o health {{ item }}
+          changed_when: false
+
+        # Get additional pool details for unhealthy pools
+        - name: Get properties for unhealthy ZFS pools
+          loop: "{{ zpool_health.results | default([]) }}"
+          loop_control:
+            label: "{{ item.item }}"
+          register: zpool_properties
+          when:
+            - ansible_os_family in ['Debian', 'RedHat', 'SUSE']
+            - zfs_command_check.rc == 0
+            - item.stdout is defined
+            - item.stdout != 'ONLINE'
+          ansible.builtin.command:
+            cmd: zpool get all {{ item.item }}
+          changed_when: false
+
+        # Notify about unhealthy ZFS pools
+        - name: Notify about unhealthy ZFS pools
+          loop: "{{ zpool_health.results | default([]) }}"
+          loop_control:
+            label: "{{ item.item }}"
+          when:
+            - ansible_os_family in ['Debian', 'RedHat', 'SUSE']
+            - zfs_command_check.rc == 0
+            - item.stdout is defined
+            - item.stdout != 'ONLINE'
+          ansible.builtin.include_role:
+            name: notifications
+          vars:
+            pool_name: "{{ item.item }}"
+            pool_health: "{{ item.stdout }}"
+            pool_status: "{{ lookup('vars', 'zpool_status_results').results | selectattr('item', 'equalto', item.item) | map(attribute='stdout') | first }}"
+            notification_type: "discord"
+            notification_title: "⚠️ Unhealthy ZFS Pool Detected"
+            notification_level: "error"
+            notification_message: |
+              **Host:** {{ ansible_hostname }}
+              **OS:** {{ ansible_distribution }} {{ ansible_distribution_version }}
+
+              **Pool:** {{ pool_name }}
+              **Health Status:** {{ pool_health }}
+
+              **Pool Status Details:**
+              ```
+              {{ pool_status }}
+              ```
+
+              For more details run the following commands on the host:
+              ```bash
+              zpool status -v {{ pool_name }}
+              zpool list {{ pool_name }}
+              zpool get all {{ pool_name }}
+              ```
