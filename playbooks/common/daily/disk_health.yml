@@ -5,150 +5,155 @@
     - linux
     - macos
     - windows
+  ignore_unreachable: true
 
   tasks:
-    # Linux disk health checks
-    - name: Get list of physical disks on Linux
-      register: linux_disks
+    - name: Main
       when:
-        - ansible_os_family in ['Debian', 'RedHat', 'SUSE']
-      ansible.builtin.shell: lsblk -d -o NAME | grep -v NAME
-      args:
-        executable: /bin/bash
-      changed_when: false
+        - ansible_os_family is defined  # this will only be defined for reachable hosts
+      block:
+        # Linux disk health checks
+        - name: Get list of physical disks on Linux
+          register: linux_disks
+          when:
+            - ansible_os_family in ['Debian', 'RedHat', 'SUSE']
+          ansible.builtin.shell: lsblk -d -o NAME | grep -v NAME
+          args:
+            executable: /bin/bash
+          changed_when: false
 
-    - name: Check health of each Linux disk
-      loop: "{{ linux_disks.stdout_lines | default([]) }}"
-      loop_control:
-        label: "{{ item }}"
-      register: smartctl_results
-      when:
-        - ansible_os_family in ['Debian', 'RedHat', 'SUSE']
-      ansible.builtin.command:
-        cmd: smartctl -H /dev/{{ item }} --all --json
-      changed_when: false
-      failed_when: false  # Don't fail if smartctl can't check a disk
+        - name: Check health of each Linux disk
+          loop: "{{ linux_disks.stdout_lines | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          register: smartctl_results
+          when:
+            - ansible_os_family in ['Debian', 'RedHat', 'SUSE']
+          ansible.builtin.command:
+            cmd: smartctl -H /dev/{{ item }} --all --json
+          changed_when: false
+          failed_when: false  # Don't fail if smartctl can't check a disk
 
-    - name: Notify about unhealthy Linux disks
-      loop: "{{ smartctl_results.results | default([]) }}"
-      loop_control:
-        label: "{{ item.item }}"
-      when:
-        - ansible_os_family in ['Debian', 'RedHat', 'SUSE']
-        - item.stdout is defined
-        - item.stdout | length > 0
-        - (item.stdout | from_json).smart_status is defined
-        - (item.stdout | from_json).smart_status.passed is defined
-        - (item.stdout | from_json).smart_status.passed == false
-      include_role:
-        name: notifications
-      vars:
-        disk_info: "{{ item.stdout | from_json }}"
-        notification_type: "discord"
-        notification_title: "⚠️ Unhealthy Disk Detected"
-        notification_level: "error"
-        notification_message: |
-          **Host:** {{ ansible_hostname }}
-          **OS:** {{ ansible_distribution }} {{ ansible_distribution_version }}
+        - name: Notify about unhealthy Linux disks
+          loop: "{{ smartctl_results.results | default([]) }}"
+          loop_control:
+            label: "{{ item.item }}"
+          when:
+            - ansible_os_family in ['Debian', 'RedHat', 'SUSE']
+            - item.stdout is defined
+            - item.stdout | length > 0
+            - (item.stdout | from_json).smart_status is defined
+            - (item.stdout | from_json).smart_status.passed is defined
+            - (item.stdout | from_json).smart_status.passed == false
+          include_role:
+            name: notifications
+          vars:
+            disk_info: "{{ item.stdout | from_json }}"
+            notification_type: "discord"
+            notification_title: "⚠️ Unhealthy Disk Detected"
+            notification_level: "error"
+            notification_message: |
+              **Host:** {{ ansible_hostname }}
+              **OS:** {{ ansible_distribution }} {{ ansible_distribution_version }}
+    
+              **Disk:** {{ disk_info.model_name }} ({{ disk_info.device.name }})
+              **Serial:** {{ disk_info.serial_number }}
+              **Status:** Failed (Exit Status: {{ disk_info.smartctl.exit_status }})
+              **Details:**
+              ```json
+              {{ disk_info.smart_status | to_nice_json }}
+              ```
+    
+              For more details run the following command on the host:
+              ```bash
+              smartctl -H /dev/{{ item.item }} --all --json
+              ```
 
-          **Disk:** {{ disk_info.model_name }} ({{ disk_info.device.name }})
-          **Serial:** {{ disk_info.serial_number }}
-          **Status:** Failed (Exit Status: {{ disk_info.smartctl.exit_status }})
-          **Details:**
-          ```json
-          {{ disk_info.smart_status | to_nice_json }}
-          ```
+        # macOS disk health checks
+        - name: Get list of physical disks on macOS
+          register: macos_disks
+          when:
+            - ansible_os_family == 'Darwin'
+          ansible.builtin.shell: diskutil list | grep -v disk | grep disk | awk '{print $1}'
+          args:
+            executable: /bin/bash
+          changed_when: false
 
-          For more details run the following command on the host:
-          ```bash
-          smartctl -H /dev/{{ item.item }} --all --json
-          ```
+        - name: Check health of each macOS disk
+          loop: "{{ macos_disks.stdout_lines | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          register: diskutil_results
+          when:
+            - ansible_os_family == 'Darwin'
+          ansible.builtin.shell: diskutil info -plist {{ item }} | grep -A5 "SMART Status"
+          changed_when: false
 
-    # macOS disk health checks
-    - name: Get list of physical disks on macOS
-      register: macos_disks
-      when:
-        - ansible_os_family == 'Darwin'
-      ansible.builtin.shell: diskutil list | grep -v disk | grep disk | awk '{print $1}'
-      args:
-        executable: /bin/bash
-      changed_when: false
+        - name: Initialize empty list for failed macOS disks
+          when:
+            - ansible_os_family == 'Darwin'
+          ansible.builtin.set_fact:
+            failed_macos_disks: []
 
-    - name: Check health of each macOS disk
-      loop: "{{ macos_disks.stdout_lines | default([]) }}"
-      loop_control:
-        label: "{{ item }}"
-      register: diskutil_results
-      when:
-        - ansible_os_family == 'Darwin'
-      ansible.builtin.shell: diskutil info -plist {{ item }} | grep -A5 "SMART Status"
-      changed_when: false
+        - name: Add failed macOS disks to the list
+          loop: "{{ diskutil_results.results | default([]) }}"
+          loop_control:
+            label: "{{ item.item }}"
+          when:
+            - ansible_os_family == 'Darwin'
+            - item.stdout is defined
+            - ('failing' in (item.stdout | lower))
+          ansible.builtin.set_fact:
+            failed_macos_disks: "{{ failed_macos_disks + [{'disk': item.item, 'status': item.stdout | regex_replace('\n', ' ')}] }}"
 
-    - name: Initialize empty list for failed macOS disks
-      when:
-        - ansible_os_family == 'Darwin'
-      ansible.builtin.set_fact:
-        failed_macos_disks: []
+        - name: Notify about unhealthy macOS disks
+          when:
+            - ansible_os_family == 'Darwin'
+            - (failed_macos_disks | default([]) | length > 0)
+          include_role:
+            name: notifications
+          vars:
+            notification_type: "discord"
+            notification_title: "⚠️ Unhealthy Disk Detected"
+            notification_level: "error"
+            notification_message: |
+              **Host:** {{ ansible_hostname }}
+              **OS:** {{ ansible_distribution }} {{ ansible_distribution_version }}
+    
+              {% for disk in failed_macos_disks %}
+              **Disk:** {{ disk.disk }}
+              **Status:** {{ disk.status }}
+              {% endfor %}
 
-    - name: Add failed macOS disks to the list
-      loop: "{{ diskutil_results.results | default([]) }}"
-      loop_control:
-        label: "{{ item.item }}"
-      when:
-        - ansible_os_family == 'Darwin'
-        - item.stdout is defined
-        - ('failing' in (item.stdout | lower))
-      ansible.builtin.set_fact:
-        failed_macos_disks: "{{ failed_macos_disks + [{'disk': item.item, 'status': item.stdout | regex_replace('\n', ' ')}] }}"
+        # Windows disk health checks
+        - name: Get disk health on Windows
+          register: disk_health_windows
+          when:
+            - ansible_os_family == 'Windows'
+          ansible.windows.win_shell: Get-PhysicalDisk | ConvertTo-Json
+          changed_when: false
 
-    - name: Notify about unhealthy macOS disks
-      when:
-        - ansible_os_family == 'Darwin'
-        - (failed_macos_disks | default([]) | length > 0)
-      include_role:
-        name: notifications
-      vars:
-        notification_type: "discord"
-        notification_title: "⚠️ Unhealthy Disk Detected"
-        notification_level: "error"
-        notification_message: |
-          **Host:** {{ ansible_hostname }}
-          **OS:** {{ ansible_distribution }} {{ ansible_distribution_version }}
+        - name: Check for unhealthy Windows disks
+          when:
+            - ansible_os_family == 'Windows'
+            - disk_health_windows.stdout is defined
+          ansible.builtin.set_fact:
+            unhealthy_disks: "{{ (disk_health_windows.stdout | from_json) | selectattr('HealthStatus', 'ne', 'Healthy') | list }}"
 
-          {% for disk in failed_macos_disks %}
-          **Disk:** {{ disk.disk }}
-          **Status:** {{ disk.status }}
-          {% endfor %}
-
-    # Windows disk health checks
-    - name: Get disk health on Windows
-      register: disk_health_windows
-      when:
-        - ansible_os_family == 'Windows'
-      ansible.windows.win_shell: Get-PhysicalDisk | ConvertTo-Json
-      changed_when: false
-
-    - name: Check for unhealthy Windows disks
-      when:
-        - ansible_os_family == 'Windows'
-        - disk_health_windows.stdout is defined
-      ansible.builtin.set_fact:
-        unhealthy_disks: "{{ (disk_health_windows.stdout | from_json) | selectattr('HealthStatus', 'ne', 'Healthy') | list }}"
-
-    - name: Notify about unhealthy Windows disks
-      when:
-        - ansible_os_family == 'Windows'
-        - unhealthy_disks | default([]) | length > 0
-      include_role:
-        name: notifications
-      vars:
-        notification_type: "discord"
-        notification_title: "⚠️ Unhealthy Disk Detected"
-        notification_level: "error"
-        notification_message: |
-          **Host:** {{ ansible_hostname }}
-          **OS:** {{ ansible_os_family }}
-
-          ```
-          {{ unhealthy_disks | to_nice_json }}
-          ```
+        - name: Notify about unhealthy Windows disks
+          when:
+            - ansible_os_family == 'Windows'
+            - unhealthy_disks | default([]) | length > 0
+          ansible.builtin.include_role:
+            name: notifications
+          vars:
+            notification_type: "discord"
+            notification_title: "⚠️ Unhealthy Disk Detected"
+            notification_level: "error"
+            notification_message: |
+              **Host:** {{ ansible_hostname }}
+              **OS:** {{ ansible_os_family }}
+    
+              ```
+              {{ unhealthy_disks | to_nice_json }}
+              ```
