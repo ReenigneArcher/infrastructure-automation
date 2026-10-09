@@ -2,6 +2,7 @@
 - name: Configure the Windows OpenSSH default shell
   hosts: windows
   gather_facts: false
+  ignore_unreachable: true
   vars:
     windows_ssh_shell_info: >-
       {{ windows_ssh_shell_probe.stdout | trim | from_json }}
@@ -31,6 +32,10 @@
       register: windows_ssh_shell_probe
       changed_when: false
       check_mode: false  # The probe only reads registry values.
+
+    - name: Skip setup for unreachable hosts
+      ansible.builtin.meta: end_host
+      when: windows_ssh_shell_probe is unreachable
 
     - name: Match the connection to the current SSH shell
       ansible.builtin.set_fact:

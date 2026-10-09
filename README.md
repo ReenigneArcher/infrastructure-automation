@@ -149,6 +149,11 @@ For every schedule, the Ansible action runs all `.yml` playbooks under any `setu
 then the playbooks matching the requested schedule. Each group is sorted by path, and setup playbooks run even
 when there are no playbooks for the requested schedule.
 
+Every play sets `ignore_unreachable: true` so offline hosts do not fail the workflow; CI checks this policy for new plays.
+Ansible has no global configuration default for this keyword. Tasks that depend on remote results must guard missing
+data, as the daily playbooks do, or end the play for the unreachable host, as the Windows SSH setup does.
+Ordinary task failures still fail the workflow.
+
 CI follows the shared LizardByte workflow pattern: SHA-pinned Python and uv setup actions, a cached
 `uv sync --locked --no-build` installation, and `uv run --locked --no-build --no-sync` commands. It also builds
 the Docker image, checks an Ansible connection to localhost, and validates playbook syntax using a temporary
