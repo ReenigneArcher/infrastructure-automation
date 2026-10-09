@@ -90,6 +90,8 @@ add `--no-dev` for an environment containing only runtime dependencies.
 
 The Dockerfile uses the official `ghcr.io/astral-sh/uv` image with Python 3.14 and installs from the same lockfile.
 Its virtual environment lives outside `/app` so mounting the checkout does not hide installed dependencies.
+The container runs as the `ansible` user (UID 1000), with its virtual environment and installed collections
+in `/home/ansible`. Bind-mounted inventory, vault password files, and SSH credentials must be readable by that user.
 
 On a Linux or macOS host, run Ansible commands through the locked environment:
 

@@ -49,6 +49,7 @@ jobs:
             --volume "$PWD:/app:ro" \
             --entrypoint /bin/bash \
             infrastructure-automation-test -e -c '
+              test "$(id -u)" -ne 0
               printf "[defaults]\n" > /tmp/ansible-smoke.cfg
               export ANSIBLE_CONFIG=/tmp/ansible-smoke.cfg
               export ANSIBLE_ROLES_PATH=/app/roles

@@ -5,7 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 ENV DISPLAY=:0
 ENV ANSIBLE_CONFIG=/app/ansible.cfg
-ENV UV_PROJECT_ENVIRONMENT=/root/.venv
+ENV UV_PROJECT_ENVIRONMENT=/home/ansible/.venv
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -24,11 +24,17 @@ apt-get install -y --no-install-recommends \
   sshpass
 apt-get clean
 rm -rf /var/lib/apt/lists/*
+
+# Create the unprivileged Ansible controller user and its working directories
+useradd --create-home --user-group --uid 1000 ansible
+install -d -o ansible -g ansible /build /app
 _DEPS
+
+USER ansible
 
 # Copy only dependency files
 WORKDIR /build
-COPY pyproject.toml uv.lock .python-version requirements.yml ./
+COPY --chown=ansible:ansible pyproject.toml uv.lock .python-version requirements.yml ./
 
 # Install locked Python dependencies
 RUN <<_PYTHON
@@ -45,7 +51,7 @@ uv run --locked --no-build --no-sync ansible-galaxy collection install -r requir
 _ANSIBLE
 
 # Set path so we don't have to activate the virtual environment
-ENV PATH="/root/.venv/bin:${PATH}"
+ENV PATH="/home/ansible/.venv/bin:${PATH}"
 
 WORKDIR /app
 
