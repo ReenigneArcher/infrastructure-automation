@@ -68,10 +68,46 @@ decryption will fail.
 Below is an example of creating a secret:
 
 ```bash
-ansible-vault encrypt_string 'my_secret_value' --name 'my_secret_variable'
+uv run --locked --no-build --no-sync ansible-vault encrypt_string 'my_secret_value' --name 'my_secret_variable'
 ```
 
 ## Pre-requisites
+
+### Python Environment
+
+Python dependencies are declared in `pyproject.toml` and pinned in `uv.lock`. Install
+[uv](https://docs.astral.sh/uv/getting-started/installation/), then set up the environment from the repository root:
+
+```bash
+uv sync --locked --no-build
+uv run --locked --no-build --no-sync ansible-galaxy collection install -r requirements.yml
+```
+
+The project uses Python 3.14 and Ansible core 2.20. Managed Linux and macOS hosts need Python 3.9 or newer.
+Ansible requires Linux or macOS as its controller; on Windows, use WSL or the provided Dockerfile.
+The default sync includes the Ansible and YAML linters in the `dev` dependency group;
+add `--no-dev` for an environment containing only runtime dependencies.
+
+The Dockerfile uses the official `ghcr.io/astral-sh/uv` image with Python 3.14 and installs from the same lockfile.
+Its virtual environment lives outside `/app` so mounting the checkout does not hide installed dependencies.
+
+On a Linux or macOS host, run Ansible commands through the locked environment:
+
+```bash
+uv run --locked --no-build --no-sync ansible-playbook playbooks/common/daily/disk_space.yml
+uv run --locked --no-build --no-sync ansible-vault encrypt_string 'my_secret_value' --name 'my_secret_variable'
+```
+
+Inside the container, the virtual environment is already on `PATH`, so Ansible commands work directly
+without activating the environment or adding `uv run`:
+
+```bash
+ansible-playbook playbooks/common/daily/disk_space.yml
+ansible-vault encrypt_string 'my_secret_value' --name 'my_secret_variable'
+```
+
+After changing Python dependencies, run `uv lock` and commit both `pyproject.toml` and `uv.lock`.
+Ansible Galaxy collections remain declared in `requirements.yml` and are installed separately.
 
 ### Windows Clients
 
@@ -95,6 +131,11 @@ netstat -nao | find /i '":22"'
 
 There are GitHub workflows that run the playbooks on a schedule, and they connect to the homelab network via
 OpenVPN.
+
+CI follows the shared LizardByte workflow pattern: SHA-pinned Python and uv setup actions, a cached
+`uv sync --locked --no-build` installation, and `uv run --locked --no-build --no-sync` commands. It also builds
+the Docker image, checks an Ansible connection to localhost, and validates playbook syntax using a temporary
+inventory.
 
 The keepalive workflow runs on the first day of each month at 12:17 UTC and can also be run manually. It updates
 `.github/keepalive.txt` and commits the timestamp to the default branch using `GITHUB_TOKEN` to keep scheduled

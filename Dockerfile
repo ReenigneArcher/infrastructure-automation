@@ -1,15 +1,11 @@
-ARG BASE=python
-ARG TAG=3.13-slim
-
-FROM ${BASE}:${TAG} AS base
+FROM ghcr.io/astral-sh/uv:0.12-python3.14-trixie-slim AS dev
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
 
-FROM base AS dev
-
 ENV DISPLAY=:0
 ENV ANSIBLE_CONFIG=/app/ansible.cfg
+ENV UV_PROJECT_ENVIRONMENT=/root/.venv
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -30,28 +26,22 @@ apt-get clean
 rm -rf /var/lib/apt/lists/*
 _DEPS
 
-# Copy only requirement files
+# Copy only dependency files
 WORKDIR /build
-COPY requirements.txt requirements-dev.txt requirements.yml ./
+COPY pyproject.toml uv.lock .python-version requirements.yml ./
 
-# Install Python dependencies
+# Install locked Python dependencies
 RUN <<_PYTHON
 #!/bin/bash
 set -e
-python -m venv /root/.venv
-source /root/.venv/bin/activate
-python -m pip install --no-cache-dir --upgrade pip setuptools wheel
-python -m pip install --no-cache-dir \
-  -r requirements.txt \
-  -r requirements-dev.txt
+uv sync --locked --no-build --no-install-project --no-python-downloads --python /usr/local/bin/python
 _PYTHON
 
 # Install Ansible dependencies
 RUN <<_ANSIBLE
 #!/bin/bash
 set -e
-source /root/.venv/bin/activate
-ansible-galaxy collection install -r requirements.yml
+uv run --locked --no-build --no-sync ansible-galaxy collection install -r requirements.yml
 _ANSIBLE
 
 # Set path so we don't have to activate the virtual environment

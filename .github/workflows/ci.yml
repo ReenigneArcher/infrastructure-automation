@@ -1,0 +1,63 @@
+---
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version-file: .python-version
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked Python dependencies
+        run: uv sync --locked --no-build --no-install-project --no-python-downloads
+
+      - name: Check installed tools
+        run: |
+          uv run --locked --no-build --no-sync ansible --version
+          uv run --locked --no-build --no-sync ansible-lint --version
+          uv run --locked --no-build --no-sync yamllint --version
+
+      - name: Build Docker image
+        run: docker build -t infrastructure-automation-test .
+
+      - name: Test Docker environment
+        run: |
+          docker run --rm \
+            --volume "$PWD:/app:ro" \
+            --entrypoint /bin/bash \
+            infrastructure-automation-test -e -c '
+              printf "[defaults]\n" > /tmp/ansible-smoke.cfg
+              export ANSIBLE_CONFIG=/tmp/ansible-smoke.cfg
+              export ANSIBLE_ROLES_PATH=/app/roles
+              uv run --locked --no-build --no-sync ansible --version
+              uv run --locked --no-build --no-sync ansible \
+                -i localhost, --connection local localhost -m ansible.builtin.ping
+              printf "[linux]\nlocalhost ansible_connection=local\n[macos]\n[windows]\n" > /tmp/inventory.ini
+              while IFS= read -r playbook; do
+                uv run --locked --no-build --no-sync ansible-playbook \
+                  --syntax-check -i /tmp/inventory.ini "$playbook"
+              done < <(find playbooks -type f -name "*.yml")
+            '

@@ -111,7 +111,7 @@ runs:
 
           echo "::group::Playbook - $playbook"
           set +e  # Allow playbook to fail without exiting the script
-          docker exec ${{ inputs.image_name }} ansible-playbook "$playbook"
+          docker exec ${{ inputs.image_name }} uv run --locked --no-build --no-sync ansible-playbook "$playbook"
 
           # Check playbook execution status
           if [ $? -ne 0 ]; then

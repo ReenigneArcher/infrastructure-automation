@@ -2,3 +2,9 @@
 .idea/
 
 .vault-password
+
+# Python environment and tool caches
+.venv/
+.cache/
+.ansible/
+__pycache__/
