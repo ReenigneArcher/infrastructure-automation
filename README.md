@@ -95,3 +95,7 @@ netstat -nao | find /i '":22"'
 
 There are GitHub workflows that run the playbooks on a schedule, and they connect to the homelab network via
 OpenVPN.
+
+The keepalive workflow runs on the first day of each month at 12:17 UTC and can also be run manually. It updates
+`.github/keepalive.txt` and commits the timestamp to the default branch using `GITHUB_TOKEN` to keep scheduled
+workflows active during periods without other repository activity. The default branch must allow these bot commits.
