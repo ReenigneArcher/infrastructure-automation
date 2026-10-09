@@ -58,6 +58,7 @@ jobs:
               uv run --locked --no-build --no-sync ansible --version
               uv run --locked --no-build --no-sync ansible \
                 -i localhost, --connection local localhost -m ansible.builtin.ping
+              uv run --locked --no-build --no-sync python -m unittest discover -s tests -v
               printf "[linux]\nlocalhost ansible_connection=local\n[macos]\n[windows]\n" > /tmp/inventory.ini
               while IFS= read -r playbook; do
                 uv run --locked --no-build --no-sync ansible-playbook \

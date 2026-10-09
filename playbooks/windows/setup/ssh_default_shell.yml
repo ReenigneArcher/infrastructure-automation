@@ -1,0 +1,56 @@
+---
+- name: Configure the Windows OpenSSH default shell
+  hosts: windows
+  gather_facts: false
+  vars:
+    windows_ssh_shell_info: >-
+      {{ windows_ssh_shell_probe.stdout | trim | from_json }}
+    # This command works through either cmd.exe or PowerShell before the
+    # inventory's shell type matches the host. No Windows modules run yet.
+    windows_ssh_shell_probe_script: |
+      $defaultShell = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\OpenSSH' `
+        -Name DefaultShell -ErrorAction SilentlyContinue).DefaultShell
+      $shellName = [System.IO.Path]::GetFileName($defaultShell)
+      if ([string]::IsNullOrEmpty($shellName) -or $shellName -ieq 'cmd.exe') {
+        $shellType = 'cmd'
+      } elseif ($shellName -in @('powershell.exe', 'pwsh.exe')) {
+        $shellType = 'powershell'
+      } else {
+        throw "Unsupported OpenSSH default shell: $defaultShell"
+      }
+      @{
+        shell_type = $shellType
+        powershell_path = Join-Path $PSHOME 'powershell.exe'
+      } | ConvertTo-Json -Compress
+
+  tasks:
+    - name: Detect the current OpenSSH default shell
+      ansible.builtin.raw: >-
+        powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand
+        {{ windows_ssh_shell_probe_script | b64encode(encoding='utf-16-le') }}
+      register: windows_ssh_shell_probe
+      changed_when: false
+      check_mode: false  # The probe only reads registry values.
+
+    - name: Match the connection to the current SSH shell
+      ansible.builtin.set_fact:
+        ansible_shell_type: "{{ windows_ssh_shell_info.shell_type }}"
+
+    - name: Ensure OpenSSH uses Windows PowerShell
+      ansible.windows.win_regedit:
+        path: HKLM:\SOFTWARE\OpenSSH
+        name: DefaultShell
+        data: "{{ windows_ssh_shell_info.powershell_path }}"
+        type: string
+        state: present
+
+    - name: Use PowerShell for subsequent SSH commands
+      ansible.builtin.set_fact:
+        ansible_shell_type: powershell
+      when: not ansible_check_mode
+
+    - name: Reconnect using the configured SSH shell
+      ansible.builtin.meta: reset_connection
+
+    - name: Verify Windows modules work over SSH
+      ansible.windows.win_ping:

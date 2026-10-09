@@ -83,7 +83,11 @@ runs:
       id: find-playbooks
       shell: bash
       run: |
-        PLAYBOOKS=$(find ./playbooks -path "*/${{ inputs.schedule_type }}/*.yml" -type f)
+        # Run setup playbooks before any schedule's playbooks gather facts.
+        PLAYBOOKS=$(
+          find ./playbooks -path '*/setup/*.yml' -type f | sort
+          find ./playbooks -path "*/${{ inputs.schedule_type }}/*.yml" ! -path '*/setup/*' -type f | sort
+        )
         echo "Found playbooks: $PLAYBOOKS"
         echo "playbooks<<EOF" >> $GITHUB_OUTPUT
         echo "$PLAYBOOKS" >> $GITHUB_OUTPUT

@@ -129,10 +129,25 @@ Verify the SSH server is running by checking the listening port:
 netstat -nao | find /i '":22"'
 ```
 
+Once SSH is reachable, run the setup playbook from the Ansible controller using an administrator account:
+
+```bash
+uv run --locked --no-build --no-sync ansible-playbook playbooks/windows/setup/ssh_default_shell.yml
+```
+
+Inside the Docker container, omit the `uv run --locked --no-build --no-sync` prefix. Add `--limit w11` to configure
+one host, or `--check` to preview changes. The playbook detects the current SSH shell before running Windows modules,
+sets OpenSSH's `DefaultShell` to Windows PowerShell only when needed, and reconnects to verify module execution.
+This setting affects incoming SSH connections only.
+
 ## Workflows
 
 There are GitHub workflows that run the playbooks on a schedule, and they connect to the homelab network via
 OpenVPN.
+
+For every schedule, the Ansible action runs all `.yml` playbooks under any `setup` directory in `playbooks/` first,
+then the playbooks matching the requested schedule. Each group is sorted by path, and setup playbooks run even
+when there are no playbooks for the requested schedule.
 
 CI follows the shared LizardByte workflow pattern: SHA-pinned Python and uv setup actions, a cached
 `uv sync --locked --no-build` installation, and `uv run --locked --no-build --no-sync` commands. It also builds
