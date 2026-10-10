@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:0.12-python3.14-trixie-slim AS dev
+FROM ghcr.io/astral-sh/uv:0.13-python3.14-trixie-slim AS dev
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
