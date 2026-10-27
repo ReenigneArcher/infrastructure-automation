@@ -3,4 +3,4 @@ collections:
   - name: ansible.posix
     version: "2.2.2"
   - name: ansible.windows
-    version: "3.9.1"
+    version: "3.9.2"
