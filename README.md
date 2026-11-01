@@ -159,6 +159,9 @@ CI follows the shared LizardByte workflow pattern: SHA-pinned Python and uv setu
 the Docker image, checks an Ansible connection to localhost, and validates playbook syntax using a temporary
 inventory.
 
-The keepalive workflow runs on the first day of each month at 12:17 UTC and can also be run manually. It updates
-`.github/keepalive.txt` and commits the timestamp to the default branch using `GITHUB_TOKEN` to keep scheduled
-workflows active during periods without other repository activity. The default branch must allow these bot commits.
+The keepalive workflow runs on the first day of each month at 12:17 UTC and can also be run manually. It discovers
+all workflows with an `on.schedule` trigger on the default branch, including future additions, and calls GitHub's
+[enable workflow API](https://docs.github.com/en/rest/actions/workflows#enable-a-workflow) using `GITHUB_TOKEN`
+with `actions: write` to keep them active during periods without other repository activity. Workflows disabled
+for inactivity are re-enabled; manually disabled workflows stay disabled. This approach makes no commits and
+works with branch protection enabled.
